@@ -1,0 +1,361 @@
+*If you love Supabase, the only thing that hurts is the hosted bill when scaling, the compute add-on pricing, or having your hobby project paused after a week of inactivity. But Supabase has been generous enough to open-source their entire stack so you can run it on your own hardware for pennies. This guide is a complete, production-grade walkthrough on self-hosting Supabase on a bare PC or VPS using Docker Compose and Caddy.*
+
+If you are coming from managed Supabase, fear not: you get the exact same Postgres database, GoTrue authentication engine, Kong API gateway, PostgREST RESTful interface, Realtime engine, Storage server, and Supabase Studio dashboard.
+
+---
+
+## The Big Reality Check: Resource Requirements & Trimming Containers
+
+Before touching a single terminal command, let's address the elephant in the server room:
+
+> **The 2.5 GB RAM Caveat:** Supabase is not a single lightweight binary. It is a fleet of **11 to 14 interconnected Docker containers**. Idle out of the box, the full stack consumes approximately **2.3 GB to 2.8 GB of RAM**.
+
+If you deploy this on a cheap 1 GB or 2 GB VPS without swap, the Linux kernel Out-Of-Memory (OOM) killer will mercilessly terminate Postgres or Studio, leaving your containers stuck in a restart loop.
+
+### Minimum Recommended Specs:
+* **For Testing / Personal Lab:** 2 CPU cores, 4 GB RAM, 20 GB SSD.
+* **For Production Workloads:** 4 CPU cores, 8 GB RAM, 50+ GB NVMe SSD.
+
+### Trimming What You Don't Need:
+You don't have to run every single container. Inside your `docker-compose.yml`, you can selectively turn off services you don't use:
+* **Logflare / Analytics (`analytics`, `vector`):** If you don't need built-in BigQuery-style platform logs or log analytics, you can comment out the `analytics` and `vector` services. That immediately frees up ~400–600 MB of RAM.
+* **Inbucket (`mail`):** Inbucket is a local webmail catcher for development. Once you configure real SMTP credentials (Resend, SendGrid, Amazon SES) in `.env`, you can safely stop the `mail` container.
+* **Realtime (`realtime-dev.supabase-realtime`):** If your app only uses standard REST/GraphQL queries and Auth, but never listens to Postgres changes over WebSockets, disable Realtime to save another ~250 MB.
+
+---
+
+## Step 1: Preparing Your Bare PC or VPS
+
+Whether you are using an old ThinkCentre mini PC under your desk or a fresh Ubuntu 24.04 / 22.04 LTS instance on Hetzner, DigitalOcean, or Linode, start with a secure foundation.
+
+### 1. Update Packages & Enable Swap
+If your host has 4 GB RAM, add a 4 GB swap file as an emergency buffer:
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### 2. Install Docker Engine & Docker Compose Plugin
+Avoid obsolete `docker-compose` v1 binaries. Install official Docker Engine v2:
+
+```bash
+# Install prerequisites
+sudo apt install -y ca-certificates curl gnupg lsb-release git ufw
+
+# Add Docker's official GPG key
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+# Set up Docker repository
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+  $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Enable Docker without sudo
+sudo usermod -aG docker $USER
+```
+
+### 3. Configure the Firewall (`ufw`)
+Only expose ports that genuinely need public Internet access. Never expose Postgres (`5432`) directly to the public web unless wrapped in WireGuard or strict firewall rules:
+
+```bash
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow ssh
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+---
+
+## Step 2: Reverse Proxy Setup (Caddy & Cloudflare)
+
+We do not expose Kong (`:8000`) or Studio (`:3000`) directly to the public Internet without TLS. **Caddy** is by far the cleanest reverse proxy because it handles automatic Let's Encrypt certificates, HTTP/2, and WebSockets without manual renewal scripts.
+
+### 1. Install Caddy
+```bash
+sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https curl
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+sudo apt update
+sudo apt install -y caddy
+```
+
+### 2. Configure `/etc/caddy/Caddyfile`
+We route API/Auth traffic through Kong on port `8000`, and protect Supabase Studio on port `3000` using basic authentication or restricted access:
+
+```caddyfile
+# Supabase API & Auth Gateway (Public)
+api.yourdomain.com {
+    reverse_proxy localhost:8000
+}
+
+# Supabase Studio Dashboard (Protected)
+studio.yourdomain.com {
+    # Optional basic auth for extra layer of security
+    # Generate password hash with: caddy hash-password
+    basic_auth {
+        admin $2a$14$examplehashedpasswordhere...
+    }
+    reverse_proxy localhost:3000
+}
+```
+
+Reload Caddy to activate:
+```bash
+sudo systemctl reload caddy
+```
+
+> **Cloudflare Proxy Note:** If you route through Cloudflare (orange cloud enabled):
+> 1. In Cloudflare Dashboard, go to **SSL/TLS** and set encryption mode to **Full (Strict)**.
+> 2. Under **Network**, ensure **WebSockets** is toggled ON (required for Supabase Realtime).
+> 3. Cloudflare will terminate public SSL while Caddy secures communication between Cloudflare and your origin server.
+
+---
+
+## Step 3: Project Setup & The Multi-DB Caveat
+
+Now let's pull Supabase's official Docker Compose setup.
+
+### The Single-DB Caveat:
+> **One Project = One Database:** A single self-hosted Supabase compose stack is designed to run **one PostgreSQL database** instance. It does not provide multi-tenant project isolation out-of-the-box like the hosted Supabase platform. If you need two separate client applications with completely isolated databases, you must instantiate two distinct directories, each with its own `COMPOSE_PROJECT_NAME` and port offsets.
+
+### 1. Clone & Organize the Compose Directory
+```bash
+# Create your application root
+mkdir -p /opt/supabase-production
+cd /opt/supabase-production
+
+# Clone official Supabase repo (shallow clone to save space)
+git clone --depth 1 https://github.com/supabase/supabase
+
+# Copy the docker directory contents to your project root
+cp -r supabase/docker/* .
+rm -rf supabase
+
+# Create your persistent environment file
+cp .env.example .env
+```
+
+Set a unique project name in `.env` to prevent Docker container name collisions:
+```bash
+COMPOSE_PROJECT_NAME=prod_supabase
+```
+
+---
+
+## Step 4: Properly Setting Up `.env` & Secrets
+
+The default `.env.example` file contains public placeholder secrets. **Never run with defaults in production.**
+
+### 1. Generate Secure Random Secrets
+Run these bash commands to generate high-entropy keys:
+
+```bash
+# Generate Postgres Password
+POSTGRES_PWD=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 24)
+echo "POSTGRES_PASSWORD=$POSTGRES_PWD"
+
+# Generate JWT Secret (must be at least 32 characters long)
+JWT_SECRET=$(openssl rand -base64 36 | tr -dc 'a-zA-Z0-9' | head -c 40)
+echo "JWT_SECRET=$JWT_SECRET"
+```
+
+### 2. Generate Matching `ANON_KEY` and `SERVICE_ROLE_KEY`
+Supabase keys are JSON Web Tokens (JWT) signed with your `JWT_SECRET`. If you change `JWT_SECRET`, default keys will immediately fail validation.
+
+You can generate matching keys using a quick Node.js one-liner on your machine:
+
+```bash
+# Install jsonwebtoken temporarily to sign tokens
+npx -y jsonwebtoken sign '{"role":"anon","iss":"supabase","iat":1700000000,"exp":2000000000}' "$JWT_SECRET"
+
+npx -y jsonwebtoken sign '{"role":"service_role","iss":"supabase","iat":1700000000,"exp":2000000000}' "$JWT_SECRET"
+```
+
+### 3. Key `.env` Variables Breakdown:
+Open `/opt/supabase-production/.env` and update these critical fields:
+
+```bash
+############
+# Secrets
+############
+POSTGRES_PASSWORD=your_generated_postgres_password
+JWT_SECRET=your_generated_40_char_jwt_secret
+ANON_KEY=your_generated_anon_jwt
+SERVICE_ROLE_KEY=your_generated_service_role_jwt
+
+############
+# URLs & Hostnames
+############
+# Public URL client apps connect to (Kong gateway through Caddy)
+API_EXTERNAL_URL=https://api.yourdomain.com
+
+# Studio Dashboard Auth
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=your_strong_dashboard_password
+
+# Authentication settings
+SITE_URL=https://your-frontend-app.com
+ADDITIONAL_REDIRECT_URLS=https://your-frontend-app.com/auth/callback,http://localhost:3000
+```
+
+---
+
+## Step 5: Setting Up Auth & OAuth Providers
+
+Supabase Auth is powered by **GoTrue**. Everything is configured via environment variables in `.env`—no database hacking required.
+
+### 1. Switch from Local Mailer to Real SMTP
+By default, emails go to Inbucket (`http://localhost:54324`). For real user registration emails, configure your SMTP service:
+
+```bash
+SMTP_ADMIN_EMAIL=support@yourdomain.com
+SMTP_HOST=smtp.resend.com
+SMTP_PORT=587
+SMTP_USER=resend
+SMTP_PASS=re_1234567890abcdef
+SMTP_SENDER_NAME="Your App Support"
+```
+
+### 2. Setting Up Google OAuth
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+2. Create an **OAuth 2.0 Client ID** (Web Application).
+3. Under **Authorized Redirect URIs**, enter:
+   `https://api.yourdomain.com/auth/v1/callback`
+4. In your `.env`, enable Google:
+   ```bash
+   GOTRUE_EXTERNAL_GOOGLE_ENABLED=true
+   GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
+   GOTRUE_EXTERNAL_GOOGLE_SECRET=your_google_client_secret
+   GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI=https://api.yourdomain.com/auth/v1/callback
+   ```
+
+### 3. Setting Up GitHub OAuth
+1. Go to **GitHub Settings** > **Developer settings** > **OAuth Apps** > **New OAuth App**.
+2. Set **Authorization callback URL** to:
+   `https://api.yourdomain.com/auth/v1/callback`
+3. In your `.env`:
+   ```bash
+   GOTRUE_EXTERNAL_GITHUB_ENABLED=true
+   GOTRUE_EXTERNAL_GITHUB_CLIENT_ID=your_github_client_id
+   GOTRUE_EXTERNAL_GITHUB_SECRET=your_github_client_secret
+   GOTRUE_EXTERNAL_GITHUB_REDIRECT_URI=https://api.yourdomain.com/auth/v1/callback
+   ```
+
+---
+
+## Step 6: Enabling Image Transformation (Supabase Storage + Imgproxy)
+
+Self-hosted Supabase comes with image transformation capabilities powered by `imgproxy`.
+
+### 1. Enable in `.env`
+Ensure these toggles are enabled:
+
+```bash
+ENABLE_IMAGE_TRANSFORMATION=true
+IMGPROXY_URL=http://imgproxy:5001
+STORAGE_IMAGE_TRANSFORMATION_ENABLED=true
+```
+
+### 2. Verify `imgproxy` in `docker-compose.yml`
+Make sure the `imgproxy` service is active in your compose file:
+
+```yaml
+imgproxy:
+  container_name: supabase-imgproxy
+  image: darthsim/imgproxy:v3.8.0
+  environment:
+    - IMGPROXY_BIND=:5001
+    - IMGPROXY_LOCAL_FILESYSTEM_ROOT=/
+    - IMGPROXY_USE_ETAG=true
+    - IMGPROXY_CACHE_CONTROL_PASSTHROUGH=true
+  restart: unless-stopped
+```
+
+Once running, you can transform images on the fly from your client apps:
+```typescript
+const { data } = supabase.storage
+  .from('avatars')
+  .getPublicUrl('profile.jpg', {
+    transform: {
+      width: 300,
+      height: 300,
+      resize: 'cover',
+      format: 'webp',
+    },
+  });
+```
+
+---
+
+## Step 7: Launching, Health Checks & Day-2 Backups
+
+With `.env` configured and Caddy in place, start the entire stack:
+
+```bash
+docker compose up -d
+```
+
+### 1. Check Container Status
+```bash
+docker compose ps
+```
+All core containers (`supabase-db`, `supabase-kong`, `supabase-auth`, `supabase-rest`, `supabase-storage`, `supabase-studio`) should show `Up (healthy)`.
+
+### 2. Verify REST Endpoint via curl
+```bash
+curl -i https://api.yourdomain.com/rest/v1/ \
+  -H "apikey: YOUR_ANON_KEY" \
+  -H "Authorization: Bearer YOUR_ANON_KEY"
+```
+A `200 OK` response confirms Kong, PostgREST, and Postgres are communicating cleanly.
+
+### 3. Automated Daily Postgres Backup
+Never run production without automated backups. Add a simple cron routine:
+
+```bash
+# Create backup directory
+mkdir -p /opt/backups/supabase
+
+# Add to crontab: daily at 2:00 AM
+(crontab -l 2>/dev/null; echo "0 2 * * * docker exec -t supabase-db pg_dumpall -U postgres | gzip > /opt/backups/supabase/db_$(date +\%Y\%m\%d).sql.gz") | crontab -
+```
+
+---
+
+## Autonomous AI Agent Prompt
+
+If you want an AI coding assistant (Cursor, Claude Code, Windsurf, Copilot) or a DevOps agent to set this entire infrastructure up automatically on a fresh Linux machine, copy and paste this prompt once you have SSH access:
+
+```prompt
+"I want to self-host Supabase on this fresh Ubuntu server with Docker Compose and Caddy.
+
+Reference guide: https://muhammadhassaan.com/blog/self-hosting-supabase-is-easy
+
+Follow these instructions in order:
+1. Ensure Docker Engine (v2) and the Docker Compose plugin are installed. Add current user to docker group.
+2. Configure a 4GB swapfile if RAM is under 8GB to prevent OOM termination of the 12+ Supabase containers.
+3. Install and configure Caddy as our reverse proxy with automatic SSL:
+   - Route 'api.<DOMAIN>' to localhost:8000 (Kong gateway).
+   - Route 'studio.<DOMAIN>' to localhost:3000 (Supabase Studio).
+4. Clone Supabase Docker files into '/opt/supabase-production', copy '.env.example' to '.env', and set 'COMPOSE_PROJECT_NAME=prod_supabase'.
+5. Generate high-entropy secrets for POSTGRES_PASSWORD and JWT_SECRET (40+ characters).
+6. Sign fresh JWTs for 'ANON_KEY' and 'SERVICE_ROLE_KEY' matching the new JWT_SECRET.
+7. Configure GoTrue OAuth environment variables for Google and GitHub with callback URI 'https://api.<DOMAIN>/auth/v1/callback'.
+8. Verify 'ENABLE_IMAGE_TRANSFORMATION=true' and ensure 'imgproxy' container is active.
+9. Start the stack with 'docker compose up -d', run health checks on port 8000, and print the live status and endpoints."
+```
+
+*Self-hosting Supabase takes the financial uncertainty out of scaling your database. Once configured behind Caddy with proper memory headroom, you have an enterprise-grade backend that you truly own.*
+

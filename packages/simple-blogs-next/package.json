@@ -1,0 +1,36 @@
+{
+  "name": "simple-blogs-next",
+  "version": "0.1.0",
+  "license": "UNLICENSED",
+  "description": "Next.js adapter for simple-blogs-client: renders the compiled blog tree as React elements.",
+  "type": "module",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "pnpm run build",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "simple-blogs-client": "*"
+  },
+  "dependencies": {
+    "hast-util-to-jsx-runtime": "^2.3.7",
+    "lucide-react": "^0.562.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.3.0",
+    "simple-blogs-client": "file:../simple-blogs-client",
+    "typescript": "^5.9.3"
+  }
+}

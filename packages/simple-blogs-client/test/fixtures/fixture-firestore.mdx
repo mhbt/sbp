@@ -1,0 +1,179 @@
+*Method 2 for deploying firestore security rules. You don't need `firebase-tools` installed for this. We use the Firebase Admin SDK directly from a Node.js script. This is perfect for projects that already have an `admin/` directory or custom backend scripts.*
+
+In [Method 1](/blog/how-to-setup-firestore-rules), we used the Firebase CLI to deploy rules. That works great, but some projects don't use `firebase-tools` at all — they manage everything through the Admin SDK. If that's you, this guide is for you.
+
+If you are familiar with firebase-admin, skip ahead using the table of contents.
+
+---
+
+## **Step 1: Get your Google Service Account Key**
+
+Same as Method 1 — we need the google service account json key to authenticate our script.
+
+1. Go to your [Firebase Console](https://console.firebase.google.com/).
+2. Click `Project Settings` (gear icon ⚙️) > `Service accounts` tab.
+3. Under `Firebase Admin SDK`, click `Generate new private key`.
+4. Download the `.json` file.
+
+> This is the same google service account key you'd use for eas submit, push notifications, or any admin operations. If you already have it, you don't need to download it again.
+
+### **Place the Key**
+
+Move the downloaded file into your `admin/` directory and rename it to `google-service-keys.json`.
+
+> [!IMPORTANT]
+> Add `google-service-keys.json` to your `.gitignore` immediately.
+> ```
+> google-service-keys.json
+> ```
+
+### **Configure the Path**
+
+Create or update your `admin/.env` file:
+
+```bash
+FIREBASE_SERVICE_ACCOUNT_PATH=./google-service-keys.json
+```
+
+> If your key is in the project root instead, use a relative path like `../google-service-keys.json`.
+
+---
+
+## **Step 2: Install Dependencies**
+
+Navigate to your `admin/` directory and install `firebase-admin`:
+
+```bash
+cd admin
+npm install firebase-admin
+```
+
+> If your project already uses `firebase-admin` for other things (like push notifications or user management), you can skip this step.
+
+## **Step 3: Write the Deployment Script**
+
+Create a file at `admin/scripts/deploy-rules.ts`. This script reads your local `firestore.rules` file and pushes it to your live project using the Admin SDK.
+
+```typescript
+import admin from '../lib/firebase';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+async function deployRules() {
+  try {
+    console.log('Reading Firestore rules...');
+    const rulesPath = path.join(__dirname, '../firebase/firestore.rules');
+
+    if (!fs.existsSync(rulesPath)) {
+      throw new Error(`Rules file not found at ${rulesPath}`);
+    }
+
+    const rulesContent = fs.readFileSync(rulesPath, 'utf8');
+
+    console.log('Deploying Firestore rules to project...');
+
+    const securityRules = admin.securityRules();
+
+    // This creates a new ruleset and applies it immediately
+    const ruleset = await securityRules.releaseFirestoreRulesetFromSource(rulesContent);
+
+    console.log(`Successfully deployed ruleset: ${ruleset.name}`);
+    console.log('Rules are now active on Cloud Firestore.');
+  } catch (error: any) {
+    console.error('Error deploying rules:', error.message || error);
+    process.exit(1);
+  }
+}
+
+deployRules();
+```
+
+> The `releaseFirestoreRulesetFromSource` method is the key here. It takes a string of rules, creates a new ruleset on Google's servers, and releases it to Firestore. All in one call. See [Manage & Deploy Rules via Admin SDK](https://firebase.google.com/docs/rules/manage-deploy) for the full API reference.
+
+## **Step 4: Write your Rules File**
+
+Create `admin/firebase/firestore.rules` with your security logic:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default: deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // System data: publicly readable
+    match /app_config/{configId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // User data: only the owner
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+  }
+}
+```
+
+> For a deep dive into the firestore rules syntax, how to handle firestore rules for authenticated users, and third-party auth strategies, check out **[Mastering Firestore Security Rules](/blog/mastering-firestore-security-rules)**.
+
+## **Step 5: Add to Package Scripts**
+
+Update your `package.json` in the `admin/` folder:
+
+```json
+"scripts": {
+  "deploy:rules": "ts-node scripts/deploy-rules.ts"
+}
+```
+
+Now deploy your rules with:
+
+```bash
+npm run deploy:rules
+```
+
+That's it. Your firestore security rules are now live, deployed directly from your admin scripts without touching `firebase-tools`.
+
+---
+
+## **When to use Method 1 vs Method 2**
+
+| | Method 1 (Firebase CLI) | Method 2 (Admin SDK) |
+| :--- | :--- | :--- |
+| **Best for** | Projects already using `firebase-tools` | Custom admin tools, monorepos |
+| **Requires** | `npx firebase` or global install | `firebase-admin` npm package |
+| **Deploy command** | `npx firebase deploy --only firestore:rules` | `npm run deploy:rules` (custom script) |
+| **Guide** | [Firebase tools and CLI](/blog/how-to-setup-firestore-rules) | This article |
+
+---
+
+## **Automation Prompt for your AI Agent (Cursor / Copilot)**
+
+If you want an AI to set this entire deployment system up for you, use this prompt:
+
+```text
+"I want to setup Firestore rules deployment using the Firebase Admin SDK, without firebase-tools.
+
+Reference guide: https://muhammadhassaan.com/blog/deploy-firestore-rules-with-admin-sdk
+
+1. My `google-service-keys.json` is in the `admin/` directory. Add it to `.gitignore`.
+2. Create or update `admin/.env` with `FIREBASE_SERVICE_ACCOUNT_PATH=./google-service-keys.json`.
+3. Ensure `firebase-admin` is installed in the `admin/` directory.
+4. Create a deployment script at `admin/scripts/deploy-rules.ts` that uses `securityRules().releaseFirestoreRulesetFromSource()` to read and deploy rules from `admin/firebase/firestore.rules`.
+5. Write a starter `firestore.rules` file with `rules_version = '2'`, default deny, public app_config, and user-scoped access.
+6. Add a `deploy:rules` script to `admin/package.json`.
+7. Run a test deploy using `npm run deploy:rules` to confirm everything works.
+
+Do this automatically. Let me know when I can start managing my rules from the `admin` folder."
+```
+
+*This completes Method 2. You now have a custom, CLI-free way to update security rules in firebase directly from your admin toolkit.*
+
