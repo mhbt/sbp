@@ -4,9 +4,17 @@ Framework-free client for the Simple Blogs API. It fetches posts, maps them to a
 
 ## Install
 
-```bash
-pnpm add simple-blogs-client
+Not published to npm. Pin the tarball from [GitHub Releases](https://github.com/mhbt/sbp/releases) in `package.json`:
+
+```json
+{
+  "dependencies": {
+    "simple-blogs-client": "https://github.com/mhbt/sbp/releases/download/v0.1.0/simple-blogs-client-0.1.0.tgz"
+  }
+}
 ```
+
+Then run `pnpm install`. The complete setup guide is in the [sbp README](https://github.com/mhbt/sbp#readme).
 
 ## Usage
 
@@ -14,11 +22,11 @@ pnpm add simple-blogs-client
 import { createBlogClient, compileToTree } from 'simple-blogs-client'
 
 const blog = createBlogClient({
-  baseUrl: 'https://api.example.com',
-  siteSlug: 'my-site',
-  siteKey: process.env.BLOG_SITE_KEY!,
+  baseUrl: process.env.SIMPLE_BLOGS_API_URL!,
+  siteSlug: process.env.SIMPLE_BLOGS_SITE_SLUG!,
+  siteKey: process.env.SIMPLE_BLOGS_SITE_KEY!,
   compile: async (rawMdx) => compileToTree(rawMdx),
-  ttlSeconds: { index: 300, post: 600 },
+  ttlSeconds: { index: 3600, post: 86400 },
 })
 
 const posts = await blog.getBlogPosts({ category: 'engineering' })
@@ -58,7 +66,7 @@ decorateRequest: (init, cache) => ({
 - `compileToTree(mdx)`: MDX to a hast-based `BlogTree`, with syntax highlighting. Code blocks have trailing blank lines removed.
 - `extractTableOfContents(rawMdx)`: `h2` and `h3` entries with slugs, read from the raw MDX.
 - `mapApiSummary`, `mapApiDetail`, `apiPostSchema`, `apiEnvelopeSchema`: API mapping and Zod schemas. Types are inferred from the Zod schemas.
-- Types: `BlogPostSummary`, `BlogPostDetail`, `BlogFrontmatter`, `BlogListOptions`, `BlogPostResolution`, `BlogProvider`, `TocItem`, `BlogTree`, `CacheHint`.
+- Types: `BlogPost`, `BlogPostSummary`, `BlogFrontmatter`, `BlogAuthor`, `BlogImage`, `BlogListOptions`, `BlogPostResolution`, `BlogProvider`, `TocItem`, `BlogTree`, `CacheHint`, `BlogClientConfig`, `ApiPost`.
 
 ## Development
 

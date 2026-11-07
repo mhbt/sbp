@@ -4,43 +4,51 @@ Next.js adapter for [simple-blogs-client](../simple-blogs-client/README.md). It 
 
 ## Install
 
-```bash
-pnpm add simple-blogs-next simple-blogs-client
+The packages are distributed as tarballs on [GitHub Releases](https://github.com/mhbt/sbp/releases), not npm. Pin the tarball URLs in `package.json`, then run `pnpm install`. The full steps are in the [sbp guide](https://github.com/mhbt/sbp#install).
+
+```json
+{
+  "dependencies": {
+    "simple-blogs-client": "https://github.com/mhbt/sbp/releases/download/v0.1.0/simple-blogs-client-0.1.0.tgz",
+    "simple-blogs-next": "https://github.com/mhbt/sbp/releases/download/v0.1.2/simple-blogs-next-0.1.2.tgz"
+  }
+}
 ```
 
-Requires `react` 19 and a Next.js app with the App Router.
+Requires `react` 19 and a Next.js 16 app with the App Router. Install `simple-blogs-client` too, because it is a peer dependency.
 
 ## Usage
 
 ```ts
+// src/lib/blog/provider.ts
 import { createBlogClient } from 'simple-blogs-client'
-import { createNextCompile, renderTree } from 'simple-blogs-next'
+import { createNextCompile } from 'simple-blogs-next'
 
-const compile = createNextCompile()
-
-const blog = createBlogClient({
-  baseUrl: process.env.BLOG_API_URL!,
-  siteSlug: 'my-site',
-  siteKey: process.env.BLOG_SITE_KEY!,
-  compile,
-  ttlSeconds: { index: 300, post: 600 },
+export const blog = createBlogClient({
+  baseUrl: process.env.SIMPLE_BLOGS_API_URL!,
+  siteSlug: process.env.SIMPLE_BLOGS_SITE_SLUG!,
+  siteKey: process.env.SIMPLE_BLOGS_SITE_KEY!,
+  compile: createNextCompile(),
+  ttlSeconds: { index: 3600, post: 86400 },
+  decorateRequest: (init, cache) => ({ ...init, next: cache }),
 })
 ```
 
-`compile` returns React content, so `resolveBlogPath(slug)` gives a post whose `content` can be rendered directly.
+`compile` returns React content, so `resolveBlogPath(slug)` gives a post whose `content` renders directly. `decorateRequest` is required for Next.js cache tags. The complete setup, including the page routes, the Tailwind `@source` line, and revalidation, is in the [sbp guide](https://github.com/mhbt/sbp#setup).
 
 ## Components
 
-`createNextCompile(components)` merges your overrides on top of `defaultComponents`. Keys are HTML tag names or MDX component names used in the post:
+`createNextCompile(components)` merges your overrides on top of `defaultComponents`. Keys are intrinsic element names such as `h1`, `h2`, `pre`, and `table`:
 
 ```ts
-import { createNextCompile, defaultComponents } from 'simple-blogs-next'
+import { createNextCompile } from 'simple-blogs-next'
 
 const compile = createNextCompile({
-  img: MyImage,
-  Callout: MyCallout,
+  h1: () => null,
 })
 ```
+
+The example hides the body `h1`, because your page template already renders the title.
 
 `defaultComponents` contains:
 
@@ -52,6 +60,7 @@ const compile = createNextCompile({
 Overrides win over the defaults, so passing `pre` replaces the code block.
 
 For full control, use `renderTree(tree, components)` with a tree from `compileToTree`.
+
 
 ## Exports
 
