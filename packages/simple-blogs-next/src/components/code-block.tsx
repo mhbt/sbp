@@ -53,7 +53,7 @@ export function CodeBlock({ children, className, title, 'data-language': languag
                 <pre
                     ref={preRef}
                     className={`
-                        bg-transparent! px-6 py-4 text-sm leading-relaxed overflow-auto max-h-[600px]
+                        bg-transparent! px-6 pt-4 pb-6 text-sm leading-relaxed overflow-auto max-h-[600px]
                         [&::selection]:bg-brand/30 [&_::selection]:bg-brand/30
                         [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar]:w-1.5
                         [&::-webkit-scrollbar-track]:bg-transparent
