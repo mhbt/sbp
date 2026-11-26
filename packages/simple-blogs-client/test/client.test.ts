@@ -79,4 +79,81 @@ describe('createBlogClient', () => {
 
     expect(await client.resolveBlogPath('missing')).toEqual({ kind: 'not_found' })
   })
+
+  it('fetches llms.txt with bearer auth and blog:llms cache hint', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response('# My Site\n\n> Summary\n', {
+        status: 200,
+        headers: { 'content-type': 'text/plain; charset=utf-8' },
+      }),
+    )
+    const decorateRequest = vi.fn((init: RequestInit, _cache: unknown) => init)
+    const client = createBlogClient({ ...baseConfig(fetchMock), decorateRequest })
+
+    const text = await client.getLlmsTxt()
+
+    expect(text).toBe('# My Site\n\n> Summary\n')
+    const [url, init] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('https://api.example.com/v1/sites/my%20site/llms.txt')
+    expect((init.headers as Record<string, string>).Authorization).toBe('Bearer key-123')
+    expect(decorateRequest.mock.calls[0][1]).toEqual({ revalidate: 60, tags: ['blog:llms'] })
+  })
+
+  it('throws on non-OK llms.txt response', async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ message: 'Forbidden' }, 403))
+    const client = createBlogClient(baseConfig(fetchMock))
+
+    await expect(client.getLlmsTxt()).rejects.toThrow('Simple Blogs API request failed (403): Forbidden')
+  })
+
+  it('fetches post markdown with canonical link, ETag, cache hint, and 404 mapping', async () => {
+    const md = '---\ntitle: Hello\nurl: https://example.com/blog/hello\n---\n\n# Hello\n'
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(md, {
+          status: 200,
+          headers: {
+            'content-type': 'text/markdown; charset=utf-8',
+            etag: '"abc123"',
+            link: '<https://example.com/blog/hello>; rel="canonical"',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse({ status: 'NOT_FOUND', message: 'Not found' }, 404))
+    const decorateRequest = vi.fn((init: RequestInit, _cache: unknown) => init)
+    const client = createBlogClient({ ...baseConfig(fetchMock), decorateRequest })
+
+    const found = await client.getPostMarkdown('hello')
+    expect(found).toEqual({
+      kind: 'found',
+      markdown: md,
+      canonicalUrl: 'https://example.com/blog/hello',
+      etag: '"abc123"',
+    })
+    const [url] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(url.toString()).toBe('https://api.example.com/v1/sites/my%20site/posts/hello/markdown')
+    expect(decorateRequest.mock.calls[0][1]).toEqual({ revalidate: 600, tags: ['blog:post:hello'] })
+
+    expect(await client.getPostMarkdown('draft-post')).toEqual({ kind: 'not_found' })
+  })
+
+  it('extracts canonicalUrl from frontmatter url when Link header is absent and throws on 500', async () => {
+    const md = '---\ntitle: Hello\nurl: "https://example.com/blog/from-fm"\n---\n\n# Hello\n'
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(md, { status: 200 }))
+      .mockResolvedValueOnce(jsonResponse({ message: 'Server error' }, 500))
+    const client = createBlogClient(baseConfig(fetchMock))
+
+    const found = await client.getPostMarkdown('hello')
+    expect(found).toEqual({
+      kind: 'found',
+      markdown: md,
+      canonicalUrl: 'https://example.com/blog/from-fm',
+      etag: null,
+    })
+
+    await expect(client.getPostMarkdown('boom')).rejects.toThrow('Simple Blogs API request failed (500): Server error')
+  })
 })

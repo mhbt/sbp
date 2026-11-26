@@ -4,17 +4,9 @@ Framework-free client for the Simple Blogs API. It fetches posts, maps them to a
 
 ## Install
 
-Not published to npm. Pin the tarball from [GitHub Releases](https://github.com/mhbt/sbp/releases) in `package.json`:
-
-```json
-{
-  "dependencies": {
-    "simple-blogs-client": "https://github.com/mhbt/sbp/releases/download/v0.1.0/simple-blogs-client-0.1.0.tgz"
-  }
-}
+```bash
+pnpm add simple-blogs-client
 ```
-
-Then run `pnpm install`. The complete setup guide is in the [sbp README](https://github.com/mhbt/sbp#readme).
 
 ## Usage
 
@@ -22,11 +14,11 @@ Then run `pnpm install`. The complete setup guide is in the [sbp README](https:/
 import { createBlogClient, compileToTree } from 'simple-blogs-client'
 
 const blog = createBlogClient({
-  baseUrl: process.env.SIMPLE_BLOGS_API_URL!,
-  siteSlug: process.env.SIMPLE_BLOGS_SITE_SLUG!,
-  siteKey: process.env.SIMPLE_BLOGS_SITE_KEY!,
+  baseUrl: 'https://api.example.com',
+  siteSlug: 'my-site',
+  siteKey: process.env.BLOG_SITE_KEY!,
   compile: async (rawMdx) => compileToTree(rawMdx),
-  ttlSeconds: { index: 3600, post: 86400 },
+  ttlSeconds: { index: 300, post: 600 },
 })
 
 const posts = await blog.getBlogPosts({ category: 'engineering' })
@@ -37,6 +29,8 @@ const result = await blog.resolveBlogPath('hello-world')
 
 - `getBlogPosts(options?)`: list post summaries. Supports `category` and cursor paging. Pages are followed until the cursor repeats.
 - `resolveBlogPath(slug)`: returns a post, a redirect, or not-found. Post fetches are tagged `blog:post:<slug>`.
+- `getLlmsTxt()`: returns the site's `llms.txt` markdown text, tagged `blog:llms`.
+- `getPostMarkdown(slug)`: returns `{ kind: 'found', markdown, canonicalUrl, etag }` or `{ kind: 'not_found' }`, tagged `blog:post:<slug>`.
 
 ## Configuration
 
@@ -66,7 +60,7 @@ decorateRequest: (init, cache) => ({
 - `compileToTree(mdx)`: MDX to a hast-based `BlogTree`, with syntax highlighting. Code blocks have trailing blank lines removed.
 - `extractTableOfContents(rawMdx)`: `h2` and `h3` entries with slugs, read from the raw MDX.
 - `mapApiSummary`, `mapApiDetail`, `apiPostSchema`, `apiEnvelopeSchema`: API mapping and Zod schemas. Types are inferred from the Zod schemas.
-- Types: `BlogPost`, `BlogPostSummary`, `BlogFrontmatter`, `BlogAuthor`, `BlogImage`, `BlogListOptions`, `BlogPostResolution`, `BlogProvider`, `TocItem`, `BlogTree`, `CacheHint`, `BlogClientConfig`, `ApiPost`.
+- Types: `BlogPostSummary`, `BlogPostDetail`, `BlogFrontmatter`, `BlogListOptions`, `BlogPostResolution`, `BlogProvider`, `TocItem`, `BlogTree`, `CacheHint`.
 
 ## Development
 

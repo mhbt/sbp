@@ -4,8 +4,8 @@ Reusable packages that render a [Simple Blogs](https://github.com/mhbt/simple-bl
 
 | Package | Version | What it does | Requires |
 | --- | --- | --- | --- |
-| [`simple-blogs-client`](./packages/simple-blogs-client) | 0.1.0 | Framework-free API client. Fetches and pages posts, maps them to typed objects, compiles MDX to a tree, and builds a table of contents. | Node.js only |
-| [`simple-blogs-next`](./packages/simple-blogs-next) | 0.1.2 | Next.js adapter. Renders the tree as React with a code block, table components, and overridable elements. | React 19, `simple-blogs-client` |
+| [`simple-blogs-client`](./packages/simple-blogs-client) | 0.2.0 | Framework-free API client. Fetches and pages posts, fetches `llms.txt` and per-post markdown, maps posts to typed objects, compiles MDX to a tree, and builds a table of contents. | Node.js only |
+| [`simple-blogs-next`](./packages/simple-blogs-next) | 0.2.0 | Next.js adapter. Renders the tree as React with a code block, table components, `llmsTxtHandler`, `postMarkdownHandler`, `markdownAlternate`, and overridable elements. | React 19, `simple-blogs-client` |
 
 Use `simple-blogs-client` alone if you render with another framework. Add `simple-blogs-next` when you use Next.js.
 
@@ -39,8 +39,8 @@ Pin the exact tarball URL in your `package.json`:
 ```json
 {
   "dependencies": {
-    "simple-blogs-client": "https://github.com/mhbt/sbp/releases/download/v0.1.0/simple-blogs-client-0.1.0.tgz",
-    "simple-blogs-next": "https://github.com/mhbt/sbp/releases/download/v0.1.2/simple-blogs-next-0.1.2.tgz"
+    "simple-blogs-client": "https://github.com/mhbt/sbp/releases/download/v0.2.0/simple-blogs-client-0.2.0.tgz",
+    "simple-blogs-next": "https://github.com/mhbt/sbp/releases/download/v0.2.0/simple-blogs-next-0.2.0.tgz"
   }
 }
 ```
@@ -62,6 +62,7 @@ Each release only contains the packages that changed. Use the URL that matches t
 | [v0.1.0](https://github.com/mhbt/sbp/releases/tag/v0.1.0) | `0.1.0` | `0.1.0` |
 | [v0.1.1](https://github.com/mhbt/sbp/releases/tag/v0.1.1) | `0.1.0` | `0.1.1` |
 | [v0.1.2](https://github.com/mhbt/sbp/releases/tag/v0.1.2) | (unchanged, use v0.1.0 or v0.1.1) | `0.1.2` |
+| [v0.2.0](https://github.com/mhbt/sbp/releases/tag/v0.2.0) | `0.2.0` | `0.2.0` |
 
 To upgrade, change the URL to the new version, run `pnpm install`, and commit the updated lockfile.
 
@@ -222,8 +223,8 @@ The contract below is what the reference website implements in `src/app/api/reva
 - Body (JSON, no other keys allowed):
   - `siteSlug` (optional string)
   - `reason` (optional): `published`, `unpublished`, `updated`, `slug_changed`, `deleted`, or `routes_changed`
-  - `paths` (optional array): allowed values are `/`, `/blog`, `/feed.xml`, `/atom.xml`, `/blog-sitemap.xml`, and `/blog/<slug>`
-  - `tags` (optional array): allowed values are `blog`, `blog:posts`, `blog:feed`, and `blog:post:<slug>`
+  - `paths` (optional array): allowed values are `/`, `/blog`, `/llms.txt`, `/feed.xml`, `/atom.xml`, `/blog-sitemap.xml`, `/blog/<slug>`, and `/blog/<slug>.md`
+  - `tags` (optional array): allowed values are `blog`, `blog:posts`, `blog:feed`, `blog:llms`, and `blog:post:<slug>`
 
 **Responses**
 
@@ -263,6 +264,8 @@ The client sends cache hints. Your `decorateRequest` turns them into Next.js `fe
 | `getBlogPosts()` (index) | `ttlSeconds.index` | `blog`, `blog:posts` |
 | `getBlogPosts({ cache: 'postPage' })` | `ttlSeconds.post` | none |
 | `resolveBlogPath(slug)` | `ttlSeconds.post` | `blog:post:<slug>` |
+| `getLlmsTxt()` | `ttlSeconds.index` | `blog:llms` |
+| `getPostMarkdown(slug)` | `ttlSeconds.post` | `blog:post:<slug>` |
 
 `postPage` is for pages that need the full list but should not depend on the list tags. The post page uses it when it builds related-post data.
 
@@ -311,6 +314,8 @@ import {
   - `{ kind: 'post', post }`
   - `{ kind: 'redirect', location, code }` where `code` is `301` or `302`
   - `{ kind: 'not_found' }`
+- `getLlmsTxt()` returns the site's `llms.txt` markdown text (`blog:llms` cache tag).
+- `getPostMarkdown(slug)` returns `{ kind: 'found', markdown, canonicalUrl, etag }` or `{ kind: 'not_found' }`.
 
 Errors: non-OK responses other than 404 and redirects throw. Responses with an unexpected envelope throw. The list request follows cursors and stops if a cursor repeats.
 
@@ -330,6 +335,9 @@ import {
   MdxTr,
   MdxTh,
   MdxTd,
+  llmsTxtHandler,
+  postMarkdownHandler,
+  markdownAlternate,
 } from 'simple-blogs-next'
 ```
 
@@ -337,6 +345,9 @@ import {
 | --- | --- |
 | `createNextCompile(components?)` | Returns the `compile` function for `createBlogClient`. Your overrides win over the defaults. |
 | `renderTree(tree, components)` | Renders a `BlogTree` to React elements. Use it directly if you compile yourself. |
+| `llmsTxtHandler(source)` | App Router GET handler for `/llms.txt` (`text/plain; charset=utf-8`). |
+| `postMarkdownHandler(source, options?)` | App Router GET handler for per-post markdown (`X-Robots-Tag: noindex`, canonical `Link` header). |
+| `markdownAlternate(slug)` | Returns `{ 'text/markdown': '/blog/<slug>.md' }` for post `alternates.types`. |
 | `defaultComponents` | The default element map. Spread it when you build your own map. |
 | `BlogComponents` (type) | `Record<string, ComponentType<any>>`. |
 | `CodeBlock`, `MdxTable`, `MdxThead`, `MdxTbody`, `MdxTr`, `MdxTh`, `MdxTd` | Default components, exported for reuse. |

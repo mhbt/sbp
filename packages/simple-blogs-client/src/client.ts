@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import { apiPostSchema, mapApiDetail, mapApiSummary } from './mapper'
-import type { BlogListOptions, BlogPostResolution, BlogProvider } from './types'
+import type { BlogListOptions, BlogPostMarkdownResult, BlogPostResolution, BlogProvider } from './types'
 
 export const apiEnvelopeSchema = z.object({
   status: z.string().optional(),
@@ -61,6 +61,22 @@ function toApiResult({ response, envelope }: { response: Response; envelope?: Ap
   }
 }
 
+function extractCanonicalUrl(response: Response, markdown: string): string | null {
+  const linkHeader = response.headers.get('link')
+  if (linkHeader) {
+    const match = linkHeader.match(/<([^>]+)>\s*;\s*rel=["']?canonical["']?/i)
+    if (match?.[1]) return match[1]
+  }
+  const fmMatch = markdown.match(/^---\r?\n([\s\S]*?)\r?\n---/)
+  if (fmMatch?.[1]) {
+    const urlLine = fmMatch[1].match(/^url:\s*(.+)$/m)
+    if (urlLine?.[1]) {
+      return urlLine[1].trim().replace(/^["']|["']$/g, '')
+    }
+  }
+  return null
+}
+
 function slugifyCategory(category: string): string {
   return category
     .trim()
@@ -77,7 +93,8 @@ export function createBlogClient<TContent>(config: BlogClientConfig<TContent>): 
     throw new Error('baseUrl must be an absolute URL.')
   }
 
-  const postsUrl = `${baseUrl}/v1/sites/${encodeURIComponent(config.siteSlug)}/posts`
+  const siteBasePath = `${baseUrl}/v1/sites/${encodeURIComponent(config.siteSlug)}`
+  const postsUrl = `${siteBasePath}/posts`
   const doFetch: typeof fetch = config.fetch ?? ((input, init) => fetch(input, init))
 
   async function requestEnvelope(url: URL, cache: CacheHint) {
@@ -93,6 +110,26 @@ export function createBlogClient<TContent>(config: BlogClientConfig<TContent>): 
     const parsed = apiEnvelopeSchema.safeParse(payload)
 
     return { response, envelope: parsed.success ? parsed.data : undefined }
+  }
+
+  async function requestText(url: URL, accept: string, cache: CacheHint, allowNotFound = false) {
+    const init: RequestInit = {
+      headers: {
+        Accept: accept,
+        Authorization: `Bearer ${config.siteKey}`,
+      },
+      redirect: 'manual',
+    }
+    const response = await doFetch(url, config.decorateRequest?.(init, cache) ?? init)
+    if (allowNotFound && response.status === 404) {
+      return { status: 404 as const, response, text: '' }
+    }
+    if (!response.ok) {
+      const payload = await response.json().catch(() => undefined)
+      const parsed = apiEnvelopeSchema.safeParse(payload)
+      throw apiError(response, parsed.success ? parsed.data : undefined)
+    }
+    return { status: response.status, response, text: await response.text() }
   }
 
   async function fetchPostsPage(category: string | null, cursor: string | null, cache: BlogListOptions['cache']): Promise<ApiResult> {
@@ -165,6 +202,35 @@ export function createBlogClient<TContent>(config: BlogClientConfig<TContent>): 
       }
 
       return { kind: 'post', post: await mapApiDetail(envelope.post, config.compile) }
+    },
+
+    async getLlmsTxt(): Promise<string> {
+      const url = new URL(`${siteBasePath}/llms.txt`)
+      const { text } = await requestText(url, 'text/plain', {
+        revalidate: config.ttlSeconds.index,
+        tags: ['blog:llms'],
+      })
+      return text
+    },
+
+    async getPostMarkdown(slug: string): Promise<BlogPostMarkdownResult> {
+      const url = new URL(`${postsUrl}/${encodeURIComponent(slug)}/markdown`)
+      const { status, response, text } = await requestText(
+        url,
+        'text/markdown',
+        {
+          revalidate: config.ttlSeconds.post,
+          tags: [`blog:post:${slug}`],
+        },
+        true,
+      )
+      if (status === 404) return { kind: 'not_found' }
+      return {
+        kind: 'found',
+        markdown: text,
+        canonicalUrl: extractCanonicalUrl(response, text),
+        etag: response.headers.get('etag'),
+      }
     },
   }
 }

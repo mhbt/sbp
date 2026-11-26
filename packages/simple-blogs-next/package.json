@@ -1,6 +1,6 @@
 {
   "name": "simple-blogs-next",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "license": "UNLICENSED",
   "description": "Next.js adapter for simple-blogs-client: renders the compiled blog tree as React elements.",
   "type": "module",

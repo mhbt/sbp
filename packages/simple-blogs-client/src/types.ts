@@ -74,7 +74,13 @@ export type BlogPostResolution<TContent = unknown> =
   | { kind: 'redirect'; location: string; code: 301 | 302 }
   | { kind: 'not_found' }
 
+export type BlogPostMarkdownResult =
+  | { kind: 'found'; markdown: string; canonicalUrl: string | null; etag: string | null }
+  | { kind: 'not_found' }
+
 export interface BlogProvider<TContent = unknown> {
   getBlogPosts(options?: BlogListOptions): Promise<BlogPostSummary[]>
   resolveBlogPath(slug: string): Promise<BlogPostResolution<TContent>>
+  getLlmsTxt(): Promise<string>
+  getPostMarkdown(slug: string): Promise<BlogPostMarkdownResult>
 }
