@@ -76,6 +76,7 @@ export type BlogPostResolution<TContent = unknown> =
 
 export type BlogPostMarkdownResult =
   | { kind: 'found'; markdown: string; canonicalUrl: string | null; etag: string | null }
+  | { kind: 'redirect'; status: 301 | 302; slug: string }
   | { kind: 'not_found' }
 
 export interface BlogProvider<TContent = unknown> {

@@ -1,6 +1,6 @@
 {
   "name": "simple-blogs-client",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "UNLICENSED",
   "description": "Framework-free client for Simple Blogs: fetches posts and compiles MDX into a serializable tree.",
   "type": "module",

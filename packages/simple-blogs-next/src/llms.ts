@@ -54,6 +54,15 @@ export function postMarkdownHandler(
       if (result.kind === 'not_found') {
         return new Response('Not found', { status: 404 })
       }
+      if (result.kind === 'redirect') {
+        return new Response(null, {
+          status: result.status,
+          headers: {
+            Location: `/blog/${encodeURIComponent(result.slug)}.md`,
+            'X-Robots-Tag': 'noindex',
+          },
+        })
+      }
 
       const headers: Record<string, string> = {
         'Content-Type': 'text/markdown; charset=utf-8',

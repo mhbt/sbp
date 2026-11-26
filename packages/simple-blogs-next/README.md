@@ -58,7 +58,7 @@ For full control, use `renderTree(tree, components)` with a tree from `compileTo
 - `createNextCompile(components?)`: returns a `compile` function for `createBlogClient`.
 - `renderTree(tree, components)`: turns a `BlogTree` into React nodes.
 - `llmsTxtHandler(clientOrFactory)`: App Router GET handler for `/llms.txt`.
-- `postMarkdownHandler(clientOrFactory, options?)`: App Router GET handler for per-post `.md` responses with `X-Robots-Tag: noindex` and canonical `Link` header.
+- `postMarkdownHandler(clientOrFactory, options?)`: App Router GET handler for per-post `.md` responses with `X-Robots-Tag: noindex`, canonical `Link` header, and `301`/`302` redirects to `/blog/<slug>.md`.
 - `markdownAlternate(slug)`: returns `{ 'text/markdown': '/blog/<slug>.md' }` for `metadata.alternates.types`.
 - `defaultComponents`, `CodeBlock`, `MdxTable`, `MdxThead`, `MdxTbody`, `MdxTr`, `MdxTh`, `MdxTd`.
 - Types: `BlogComponents`, `LlmsTxtSource`, `PostMarkdownSource`, `PostMarkdownHandlerOptions`.

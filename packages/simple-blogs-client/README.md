@@ -30,7 +30,7 @@ const result = await blog.resolveBlogPath('hello-world')
 - `getBlogPosts(options?)`: list post summaries. Supports `category` and cursor paging. Pages are followed until the cursor repeats.
 - `resolveBlogPath(slug)`: returns a post, a redirect, or not-found. Post fetches are tagged `blog:post:<slug>`.
 - `getLlmsTxt()`: returns the site's `llms.txt` markdown text, tagged `blog:llms`.
-- `getPostMarkdown(slug)`: returns `{ kind: 'found', markdown, canonicalUrl, etag }` or `{ kind: 'not_found' }`, tagged `blog:post:<slug>`.
+- `getPostMarkdown(slug)`: returns `{ kind: 'found', markdown, canonicalUrl, etag }`, `{ kind: 'redirect', status, slug }` (`301` or `302`), or `{ kind: 'not_found' }`, tagged `blog:post:<slug>`.
 
 ## Configuration
 

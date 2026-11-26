@@ -156,4 +156,47 @@ describe('createBlogClient', () => {
 
     await expect(client.getPostMarkdown('boom')).rejects.toThrow('Simple Blogs API request failed (500): Server error')
   })
+
+  it('handles 301 and 302 markdown redirects with redirect: manual without following', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 301,
+          headers: {
+            Location: '/v1/sites/my%20site/posts/new-hello/markdown',
+            'X-Simple-Blogs-Redirect-Slug': 'new-hello',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(null, {
+          status: 302,
+          headers: {
+            Location: 'https://api.example.com/v1/sites/my%20site/posts/temp%20slug/markdown',
+          },
+        }),
+      )
+      .mockResolvedValueOnce(new Response(null, { status: 301 }))
+
+    const client = createBlogClient(baseConfig(fetchMock))
+
+    expect(await client.getPostMarkdown('old-hello')).toEqual({
+      kind: 'redirect',
+      status: 301,
+      slug: 'new-hello',
+    })
+    const [, firstInit] = fetchMock.mock.calls[0] as unknown as [URL, RequestInit]
+    expect(firstInit.redirect).toBe('manual')
+
+    expect(await client.getPostMarkdown('temp-old')).toEqual({
+      kind: 'redirect',
+      status: 302,
+      slug: 'temp slug',
+    })
+
+    await expect(client.getPostMarkdown('broken-redirect')).rejects.toThrow(
+      'Simple Blogs API returned an invalid redirect response.',
+    )
+  })
 })

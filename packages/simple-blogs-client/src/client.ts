@@ -77,6 +77,25 @@ function extractCanonicalUrl(response: Response, markdown: string): string | nul
   return null
 }
 
+function extractRedirectSlug(response: Response, requestUrl: URL): string | null {
+  const headerSlug = response.headers.get('x-simple-blogs-redirect-slug')?.trim()
+  if (headerSlug) return headerSlug
+
+  const location = response.headers.get('location')?.trim()
+  if (!location) return null
+
+  try {
+    const pathname = new URL(location, requestUrl).pathname
+    const apiMatch = pathname.match(/\/posts\/([^/]+)\/markdown\/?$/)
+    if (apiMatch?.[1]) return decodeURIComponent(apiMatch[1])
+    const blogMatch = pathname.match(/\/blog\/([^/]+)\.md\/?$/)
+    if (blogMatch?.[1]) return decodeURIComponent(blogMatch[1])
+  } catch {
+    return null
+  }
+  return null
+}
+
 function slugifyCategory(category: string): string {
   return category
     .trim()
@@ -112,7 +131,12 @@ export function createBlogClient<TContent>(config: BlogClientConfig<TContent>): 
     return { response, envelope: parsed.success ? parsed.data : undefined }
   }
 
-  async function requestText(url: URL, accept: string, cache: CacheHint, allowNotFound = false) {
+  async function requestText(
+    url: URL,
+    accept: string,
+    cache: CacheHint,
+    options: { allowNotFound?: boolean; allowRedirect?: boolean } = {},
+  ) {
     const init: RequestInit = {
       headers: {
         Accept: accept,
@@ -121,8 +145,11 @@ export function createBlogClient<TContent>(config: BlogClientConfig<TContent>): 
       redirect: 'manual',
     }
     const response = await doFetch(url, config.decorateRequest?.(init, cache) ?? init)
-    if (allowNotFound && response.status === 404) {
+    if (options.allowNotFound && response.status === 404) {
       return { status: 404 as const, response, text: '' }
+    }
+    if (options.allowRedirect && (response.status === 301 || response.status === 302)) {
+      return { status: response.status as 301 | 302, response, text: '' }
     }
     if (!response.ok) {
       const payload = await response.json().catch(() => undefined)
@@ -222,9 +249,16 @@ export function createBlogClient<TContent>(config: BlogClientConfig<TContent>): 
           revalidate: config.ttlSeconds.post,
           tags: [`blog:post:${slug}`],
         },
-        true,
+        { allowNotFound: true, allowRedirect: true },
       )
       if (status === 404) return { kind: 'not_found' }
+      if (status === 301 || status === 302) {
+        const targetSlug = extractRedirectSlug(response, url)
+        if (!targetSlug) {
+          throw new Error('Simple Blogs API returned an invalid redirect response.')
+        }
+        return { kind: 'redirect', status, slug: targetSlug }
+      }
       return {
         kind: 'found',
         markdown: text,
